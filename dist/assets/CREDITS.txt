@@ -1,0 +1,6 @@
+Photo material maps from Poly Haven (CC0):
+Asphalt 01: https://polyhaven.com/a/asphalt_01
+Concrete Wall 001: https://polyhaven.com/a/concrete_wall_001
+
+Each material includes 1K JPEG diffuse, OpenGL normal, and roughness maps.
+The game code and Three.js library are separate from these texture assets.

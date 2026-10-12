@@ -13,8 +13,10 @@ const mat=(color,roughness=.75,metalness=.1)=>new THREE.MeshStandardMaterial({co
 const dark=mat(0x192b32), concrete=mat(0x435359), steel=mat(0x172b36,.4,.76), trim=mat(0x788b8d,.35,.5), asphalt=mat(0x26363d), neonC= new THREE.MeshBasicMaterial({color:0x19e4e1}), neonP=new THREE.MeshBasicMaterial({color:0xff4c92});
 const obstacles=[], surfaces=[], worldMeshes=[], enemies=[], effects=[], lights=[];let running=false,dead=false,wave=1,kills=0,health=100,ammo=30,reloading=false,lastShot=0,stageTimer=0,elapsed=0,shake=0,flash=0,toastTimer=0;
 const weapons={rifle:{name:'VX-7 / AUTO',mag:30,delay:100,damage:1,reload:1350},smg:{name:'RAPID-9 / SMG',mag:42,delay:65,damage:.72,reload:1600},marksman:{name:'MK-12 / DMR',mag:12,delay:390,damage:2.5,reload:1850}};let selectedWeapon='rifle';const spec=()=>weapons[selectedWeapon];
-const player=new THREE.Vector3(0,1.65,14);let yaw=0,pitch=0,walkPhase=0,shotHeld=false,sprinting=false,move={x:0,y:0},aimPointer=null,movePointer=null,lastAim={x:0,y:0},vy=0,grounded=true;const keys={};
-const box=(w,h,d,m,x,y,z,cast=true)=>{const o=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),m);o.position.set(x,y,z);o.castShadow=cast;o.receiveShadow=true;scene.add(o);return o};
+const player=new THREE.Vector3(0,1.65,14),horizontalVelocity=new THREE.Vector3();let yaw=0,pitch=0,walkPhase=0,shotHeld=false,sprinting=false,move={x:0,y:0},aimPointer=null,movePointer=null,lastAim={x:0,y:0},vy=0,grounded=true;const keys={};
+function tiledBoxGeometry(w,h,d){const geometry=new THREE.BoxGeometry(w,h,d),uv=geometry.getAttribute('uv'),faceSizes=[[d,h],[d,h],[w,d],[w,d],[w,h],[w,h]];
+  for(let face=0;face<6;face++)for(let vertex=0;vertex<4;vertex++){const i=face*4+vertex;uv.setXY(i,uv.getX(i)*faceSizes[face][0]/2,uv.getY(i)*faceSizes[face][1]/2)}uv.needsUpdate=true;return geometry}
+const box=(w,h,d,m,x,y,z,cast=true)=>{const g=(m===concrete||m===asphalt)?tiledBoxGeometry(w,h,d):new THREE.BoxGeometry(w,h,d);const o=new THREE.Mesh(g,m);o.position.set(x,y,z);o.castShadow=cast;o.receiveShadow=true;scene.add(o);return o};
 const cyl=(r,h,m,x,y,z)=>{const o=new THREE.Mesh(new THREE.CylinderGeometry(r,r,h,10),m);o.position.set(x,y,z);o.castShadow=true;o.receiveShadow=true;scene.add(o);return o};
 function glow(x,y,z,color,intensity=12,range=13){const l=new THREE.PointLight(color,intensity,range,2);l.position.set(x,y,z);scene.add(l);lights.push(l);return l}
 function solid(x,z,w,d,h,y=0){obstacles.push({x,z,w,d,h,y})}
@@ -34,9 +36,17 @@ function weatherTexture(base,variation,repeat){const c=document.createElement('c
   ctx.putImageData(im,0,0);ctx.strokeStyle='rgba(7,12,16,.19)';ctx.lineWidth=1;for(let i=0;i<26;i++){let x=rand()*256,y=rand()*256;ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x+rand()*25-12,y+rand()*40-20);ctx.stroke()}
   const t=new THREE.CanvasTexture(c);t.wrapS=t.wrapT=THREE.RepeatWrapping;t.repeat.set(repeat,repeat);t.colorSpace=THREE.SRGBColorSpace;t.anisotropy=Math.min(renderer.capabilities.getMaxAnisotropy(),8);return t
 }
-asphalt.map=weatherTexture(92,45,19);asphalt.color.setHex(0xffffff);asphalt.roughness=.87;asphalt.needsUpdate=true;
-concrete.map=weatherTexture(137,50,2);concrete.color.setHex(0xbac4c2);concrete.roughness=.94;concrete.needsUpdate=true;
+asphalt.map=weatherTexture(92,45,1);asphalt.color.setHex(0xffffff);asphalt.roughness=.87;asphalt.needsUpdate=true;
+concrete.map=weatherTexture(137,50,1);concrete.color.setHex(0xbac4c2);concrete.roughness=.94;concrete.needsUpdate=true;
 dark.map=weatherTexture(91,34,2);dark.color.setHex(0x9aaab0);dark.needsUpdate=true;
+// Photographed CC0 PBR maps. Procedural materials above remain visible while assets load.
+const loader=new THREE.TextureLoader();
+function photoMap(path,color=false){return loader.load('./assets/'+path,t=>{t.wrapS=t.wrapT=THREE.RepeatWrapping;t.anisotropy=Math.min(renderer.capabilities.getMaxAnisotropy(),8);if(color)t.colorSpace=THREE.SRGBColorSpace;t.needsUpdate=true})}
+function installMaps(material,name){const color=photoMap(name+'_color.jpg',true),normal=photoMap(name+'_normal.jpg'),rough=photoMap(name+'_rough.jpg');
+  for(const t of [color,normal,rough]){t.wrapS=t.wrapT=THREE.RepeatWrapping;t.anisotropy=Math.min(renderer.capabilities.getMaxAnisotropy(),8)}
+  material.map=color;material.normalMap=normal;material.normalScale.set(.35,.35);material.roughnessMap=rough;material.color.setHex(0xffffff);material.roughness=1;material.needsUpdate=true
+}
+installMaps(asphalt,'asphalt');installMaps(concrete,'concrete');
 // Glossy patches catch the street lights without adding expensive real-time reflections.
 for(let i=0;i<20;i++){const x=(rnd()-.5)*95,z=(rnd()-.5)*95,w=.7+rnd()*2.7,d=.6+rnd()*2.3;
   const puddle=new THREE.Mesh(new THREE.PlaneGeometry(w,d),new THREE.MeshPhysicalMaterial({color:0x172d35,metalness:.38,roughness:.12,clearcoat:1,clearcoatRoughness:.08,transparent:true,opacity:.63,depthWrite:false}));puddle.rotation.x=-Math.PI/2;puddle.rotation.z=rnd()*6.28;puddle.position.set(x,.025,z);scene.add(puddle)
@@ -119,7 +129,7 @@ function shoot(){if(!running||dead||reloading)return;const now=performance.now()
   const origin=new THREE.Vector3();gun.localToWorld(origin.copy(muzzle.position));tracer(origin,end);if(ammo===0)reload()
 }
 function reload(){if(!running||reloading||ammo===spec().mag)return;reloading=true;toast('טוען מחסנית...');setTimeout(()=>{if(running){ammo=spec().mag;updateHud()}reloading=false},spec().reload)}
-function start(){running=true;dead=false;wave=1;kills=0;health=100;ammo=spec().mag;reloading=false;lastShot=0;stageTimer=0;elapsed=0;player.set(0,1.65,14);vy=0;grounded=true;yaw=0;pitch=0;clearEnemies();for(let i=0;i<4;i++)spawn();updateHud();$('menu').style.display='none';$('hud').style.display='block';$('pause').style.display='block';if(mobile)$('controls').classList.add('active');else canvas.requestPointerLock?.();toast('גל 01 // הישרדות')}
+function start(){running=true;dead=false;wave=1;kills=0;health=100;ammo=spec().mag;reloading=false;lastShot=0;stageTimer=0;elapsed=0;player.set(0,1.65,14);horizontalVelocity.set(0,0,0);vy=0;grounded=true;yaw=0;pitch=0;clearEnemies();for(let i=0;i<4;i++)spawn();updateHud();$('menu').style.display='none';$('hud').style.display='block';$('pause').style.display='block';if(mobile)$('controls').classList.add('active');else canvas.requestPointerLock?.();toast('גל 01 // הישרדות')}
 function end(){running=false;dead=true;shotHeld=false;document.exitPointerLock?.();$('menuTitle').textContent='המשימה הסתיימה';$('menuDesc').textContent=`הגעת לגל ${wave} וצברת ${kills} חיסולים. אפשר להיכנס שוב לזירה ולשבור את השיא.`;$('start').textContent='נסה שוב ←';$('menu').style.display='flex';$('controls').classList.remove('active');$('pause').style.display='none'}
 function pause(){if(dead)return;running=!running;if(!running){shotHeld=false;document.exitPointerLock?.();$('menuTitle').textContent='המשחק מושהה';$('menuDesc').textContent=`גל ${wave} • ${kills} חיסולים. חזור לזירה והמשך בדיוק מאותה נקודה.`;$('start').textContent='המשך במשחק ←';$('menu').style.display='flex';$('controls').classList.remove('active');$('pause').style.display='none'}else{$('menu').style.display='none';$('pause').style.display='block';if(mobile)$('controls').classList.add('active');else canvas.requestPointerLock?.()}}
 $('start').addEventListener('click',()=>{if(!dead&&wave&&$('menuTitle').textContent==='המשחק מושהה')pause();else start()});$('pause').addEventListener('click',pause);
@@ -136,16 +146,19 @@ $('fire').addEventListener('pointerdown',e=>{e.preventDefault();shotHeld=true;sh
 $('jump').addEventListener('pointerdown',e=>{e.preventDefault();jump()});
 function update(dt){elapsed+=dt;camera.rotation.y=yaw;camera.rotation.x=pitch;
   let mx=move.x+(keys.KeyD||keys.ArrowRight?1:0)-(keys.KeyA||keys.ArrowLeft?1:0),my=-move.y+(keys.KeyW||keys.ArrowUp?1:0)-(keys.KeyS||keys.ArrowDown?1:0),len=Math.hypot(mx,my);if(len>1){mx/=len;my/=len}
-  const speed=(sprinting||keys.ShiftLeft?9.2:6.3)*dt,dx=(Math.cos(yaw)*mx-Math.sin(yaw)*my)*speed,dz=(-Math.sin(yaw)*mx-Math.cos(yaw)*my)*speed;
+  const speed=sprinting||keys.ShiftLeft?9.2:6.3,desiredX=(Math.cos(yaw)*mx-Math.sin(yaw)*my)*speed,desiredZ=(-Math.sin(yaw)*mx-Math.cos(yaw)*my)*speed;
+  const response=1-Math.exp(-(grounded?12:4)*dt);horizontalVelocity.x+=(desiredX-horizontalVelocity.x)*response;horizontalVelocity.z+=(desiredZ-horizontalVelocity.z)*response;
+  const dx=horizontalVelocity.x*dt,dz=horizontalVelocity.z*dt;
   let feet=player.y-1.65;
   const tryMove=(x,z)=>{const nextFloor=groundAt(x,z,feet);if(nextFloor>feet+.64)return false;if(collision(x,z,.43,Math.max(feet,nextFloor)))return false;return true};
-  if(tryMove(player.x+dx,player.z))player.x+=dx;if(tryMove(player.x,player.z+dz))player.z+=dz;
+  if(tryMove(player.x+dx,player.z))player.x+=dx;else horizontalVelocity.x=0;
+  if(tryMove(player.x,player.z+dz))player.z+=dz;else horizontalVelocity.z=0;
   const floor=groundAt(player.x,player.z,feet);
   if(grounded&&floor>feet&&floor-feet<=.64){player.y=floor+1.65;feet=floor}
   vy-=16.5*dt;let nextFeet=feet+vy*dt;
   if(vy>0){for(const s of surfaces){if(Math.abs(player.x-s.x)<s.w/2-.15&&Math.abs(player.z-s.z)<s.d/2-.15&&feet+1.65<s.y-.1&&nextFeet+1.65>=s.y-.25){nextFeet=s.y-1.65-.25;vy=0}}}
   const landing=groundAt(player.x,player.z,Math.max(feet,nextFeet),.64);
-  if(vy<=0&&nextFeet<=landing){nextFeet=landing;vy=0;grounded=true}else grounded=false;
+  if(vy<=0&&nextFeet<=landing){const impact=-vy;nextFeet=landing;vy=0;grounded=true;if(impact>11){health=Math.max(0,health-Math.round((impact-11)*2));updateHud();if(health<=0)end()}}else grounded=false;
   player.y=nextFeet+1.65;
   walkPhase+=len*dt*11;camera.position.copy(player);camera.position.y+=len&&grounded?Math.sin(walkPhase)*.028:Math.sin(elapsed*1.8)*.006;
   gun.position.set(.34+Math.sin(walkPhase)*.009*len,-.29+Math.abs(Math.cos(walkPhase))*.014*len,-.52+Math.min(shake,.06));gun.rotation.x=-.035+shake*2;shake=Math.max(0,shake-dt*.3);
